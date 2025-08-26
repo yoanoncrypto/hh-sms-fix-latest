@@ -80,6 +80,8 @@ interface Campaign {
   description: string;
   image_url?: string;
   date?: string;
+  end_date?: string;
+  is_active: boolean;
   location?: string;
   latitude?: number;
   longitude?: number;
@@ -129,6 +131,8 @@ const CampaignManagement: React.FC = () => {
     short_id: "",
     image_url: "",
     date: "",
+    endDate: "",
+    isActive: false,
     location: "",
     latitude: undefined as number | undefined,
     longitude: undefined as number | undefined,
@@ -247,6 +251,8 @@ const CampaignManagement: React.FC = () => {
         short_id: shortId,
         image_url: newCampaign.image_url || null,
         date: newCampaign.date || null,
+        end_date: newCampaign.endDate ? new Date(newCampaign.endDate).toISOString() : (newCampaign.date ? new Date(newCampaign.date).toISOString() : null),
+        is_active: newCampaign.isActive,
         location: newCampaign.location || null,
         latitude:
           typeof newCampaign.latitude === "number"
@@ -292,6 +298,8 @@ const CampaignManagement: React.FC = () => {
           description: newCampaign.description,
           image_url: newCampaign.image_url || null,
           date: newCampaign.date || null,
+          end_date: newCampaign.endDate ? new Date(newCampaign.endDate).toISOString() : (newCampaign.date ? new Date(newCampaign.date).toISOString() : null),
+          is_active: newCampaign.isActive,
           location: newCampaign.location || null,
           latitude: newCampaign.latitude || null,
           longitude: newCampaign.longitude || null,
@@ -329,6 +337,8 @@ const CampaignManagement: React.FC = () => {
       short_id: campaign.short_id,
       image_url: campaign.image_url || "",
       date: formattedDate,
+      endDate: campaign.end_date ? new Date(campaign.end_date).toISOString().slice(0, 16) : "",
+      isActive: campaign.is_active,
       location: campaign.location || "",
       latitude: campaign.latitude,
       longitude: campaign.longitude,
@@ -442,6 +452,8 @@ const CampaignManagement: React.FC = () => {
       short_id: "",
       image_url: "",
       date: "",
+      endDate: "",
+      isActive: false,
       location: "",
       latitude: undefined,
       longitude: undefined,
@@ -883,7 +895,7 @@ const CampaignManagement: React.FC = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.date")}
+                    Start Date & Time
                   </label>
                   <DatePicker
                     selected={
@@ -915,6 +927,52 @@ const CampaignManagement: React.FC = () => {
                     {validationErrors.date}
                   </p>
                 )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    End Date & Time
+                  </label>
+                  <DatePicker
+                    selected={
+                      newCampaign.endDate ? new Date(newCampaign.endDate) : null
+                    }
+                    onChange={(date) => {
+                      if (date) {
+                        // Round to nearest 30 minutes
+                        const roundedDate = new Date(date);
+                        const minutes = roundedDate.getMinutes();
+                        const roundedMinutes = minutes < 30 ? 0 : 30;
+                        roundedDate.setMinutes(roundedMinutes, 0, 0);
+
+                        const isoString = roundedDate.toISOString();
+                        handleFieldChange("endDate", isoString);
+                      }
+                    }}
+                    showTimeSelect
+                    timeIntervals={30}
+                    timeCaption="Time"
+                    dateFormat="MMMM d, yyyy h:mm aa"
+                    placeholderText="Select end date and time"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    minDate={new Date()}
+                  />
+                </div>
+
+                <div>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={newCampaign.isActive}
+                      onChange={(e) =>
+                        handleFieldChange("isActive", e.target.checked)
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700">
+                      Campaign is Active
+                    </span>
+                  </label>
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1215,7 +1273,7 @@ const CampaignManagement: React.FC = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.date")} & Time
+                    Start Date & Time
                   </label>
                   <DatePicker
                     selected={
@@ -1247,6 +1305,52 @@ const CampaignManagement: React.FC = () => {
                     {validationErrors.date}
                   </p>
                 )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    End Date & Time
+                  </label>
+                  <DatePicker
+                    selected={
+                      newCampaign.endDate ? new Date(newCampaign.endDate) : null
+                    }
+                    onChange={(date) => {
+                      if (date) {
+                        // Round to nearest 30 minutes
+                        const roundedDate = new Date(date);
+                        const minutes = roundedDate.getMinutes();
+                        const roundedMinutes = minutes < 30 ? 0 : 30;
+                        roundedDate.setMinutes(roundedMinutes, 0, 0);
+
+                        const isoString = roundedDate.toISOString();
+                        handleFieldChange("endDate", isoString);
+                      }
+                    }}
+                    showTimeSelect
+                    timeIntervals={30}
+                    timeCaption="Time"
+                    dateFormat="MMMM d, yyyy h:mm aa"
+                    placeholderText="Select end date and time"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    minDate={new Date()}
+                  />
+                </div>
+
+                <div>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={newCampaign.isActive}
+                      onChange={(e) =>
+                        handleFieldChange("isActive", e.target.checked)
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700">
+                      Campaign is Active
+                    </span>
+                  </label>
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
