@@ -160,10 +160,12 @@ export type Database = {
           description: string;
           image_url: string | null;
           date: string | null;
+          end_date: string | null;
           location: string | null;
           latitude: number | null;
           longitude: number | null;
           rsvp_enabled: boolean;
+          is_active: boolean;
           type: "event" | "promotion";
           created_at: string;
         };
@@ -174,10 +176,12 @@ export type Database = {
           description: string;
           image_url?: string | null;
           date?: string | null;
+          end_date?: string | null;
           location?: string | null;
           latitude?: number | null;
           longitude?: number | null;
           rsvp_enabled?: boolean;
+          is_active?: boolean;
           type: "event" | "promotion";
           created_at?: string;
         };
@@ -188,10 +192,12 @@ export type Database = {
           description?: string;
           image_url?: string | null;
           date?: string | null;
+          end_date?: string | null;
           location?: string | null;
           latitude?: number | null;
           longitude?: number | null;
           rsvp_enabled?: boolean;
+          is_active?: boolean;
           type?: "event" | "promotion";
           created_at?: string;
         };
