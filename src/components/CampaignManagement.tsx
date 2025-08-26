@@ -1,143 +1,70 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { supabase } from "../lib/supabase";
-import { generateUniqueShortId } from "../utils/shortId";
-import { useStorageUpload } from "../hooks/useStorageUpload";
 import {
   Plus,
+  Search,
+  Edit,
+  Trash2,
+  Eye,
   Calendar,
   MapPin,
-  Eye,
-  Trash2,
-  ExternalLink,
+  Users,
   X,
-  Image as ImageIcon,
-  Edit,
-  Search,
-  AlertTriangle,
+  Upload,
+  Save,
+  ExternalLink,
+  Copy,
+  Check,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
+import { supabase } from "../lib/supabase";
+import { Campaign } from "../types";
+import { generateShortId } from "../utils/shortId";
+import { useStorageUpload } from "../hooks/useStorageUpload";
+import LocationMapPicker from "./LocationMapPicker";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
-import LocationMapPicker from "./LocationMapPicker";
-import { Button } from "./ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
-
-// Custom CSS for DatePicker styling
-const datePickerStyles = `
-  .react-datepicker-wrapper {
-    width: 100%;
-  }
-  
-  .react-datepicker__input-container input {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 0.375rem;
-    font-size: 16px;
-    min-height: 44px;
-    outline: none;
-    transition: all 0.2s;
-  }
-  
-  .react-datepicker__input-container input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
-  }
-  
-  .react-datepicker__input-container input:hover {
-    border-color: #9ca3af;
-  }
-  
-  .react-datepicker-popper {
-    z-index: 1000;
-  }
-  
-  .react-datepicker__time-container {
-    border-left: 1px solid #e5e7eb;
-  }
-  
-  .react-datepicker__time-list-item--selected {
-    background-color: #3b82f6 !important;
-    color: white !important;
-  }
-  
-  .react-datepicker__time-list-item:hover {
-    background-color: #f3f4f6 !important;
-  }
-`;
-
-interface Campaign {
-  id: string;
-  short_id: string;
-  name: string;
-  description: string;
-  image_url?: string;
-  date?: string;
-  location?: string;
-  latitude?: number;
-  longitude?: number;
-  rsvp_enabled: boolean;
-  type: "event" | "promotion";
-  created_at: string;
-}
-
-interface ValidationErrors {
-  name?: string;
-  description?: string;
-  type?: string;
-  image_url?: string;
-  date?: string;
-  location?: string;
-  latitude?: string;
-  longitude?: string;
-}
+import { Link } from "react-router-dom";
 
 const CampaignManagement: React.FC = () => {
-  const navigate = useNavigate();
   const { t } = useTranslation();
   const { uploadState, uploadFile, clearUpload } = useStorageUpload();
 
-  // Inject custom DatePicker styles
-  useEffect(() => {
-    const styleElement = document.createElement("style");
-    styleElement.textContent = datePickerStyles;
-    document.head.appendChild(styleElement);
-
-    return () => {
-      document.head.removeChild(styleElement);
-    };
-  }, []);
+  // State
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
-  const [validationErrors, setValidationErrors] = useState<ValidationErrors>(
-    {}
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingCampaign, setDeletingCampaign] = useState<Campaign | null>(
+    null
   );
-  const [newCampaign, setNewCampaign] = useState({
+  const [copied, setCopied] = useState<string | null>(null);
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 12;
+
+  // Form state
+  const [formData, setFormData] = useState({
     name: "",
     description: "",
-    short_id: "",
-    image_url: "",
-    date: "",
+    type: "" as "event" | "promotion" | "",
+    imageUrl: "",
+    date: null as Date | null,
+    endDate: null as Date | null,
     location: "",
-    latitude: undefined as number | undefined,
-    longitude: undefined as number | undefined,
-    rsvp_enabled: true, // Default to true since default type is "event"
-    type: "event" as "event" | "promotion",
+    latitude: null as number | null,
+    longitude: null as number | null,
+    rsvpEnabled: false,
+    isActive: false,
   });
-  const [dragActive, setDragActive] = useState(false);
-  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
-  const [campaignToDelete, setCampaignToDelete] = useState<string | null>(null);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadedImageFile, setUploadedImageFile] = useState<File | null>(null);
 
   useEffect(() => {
     fetchCampaigns();
@@ -145,6 +72,7 @@ const CampaignManagement: React.FC = () => {
 
   const fetchCampaigns = async () => {
     try {
+      setLoading(true);
       const { data, error } = await supabase
         .from("campaigns")
         .select("*")
@@ -152,14 +80,214 @@ const CampaignManagement: React.FC = () => {
 
       if (error) throw error;
       setCampaigns(data || []);
-    } catch (error) {
-      console.error("Error fetching campaigns:", error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch campaigns");
     } finally {
       setLoading(false);
     }
   };
 
-  // Filter campaigns based on search term
+  const resetForm = () => {
+    setFormData({
+      name: "",
+      description: "",
+      type: "",
+      imageUrl: "",
+      date: null,
+      endDate: null,
+      location: "",
+      latitude: null,
+      longitude: null,
+      rsvpEnabled: false,
+      isActive: false,
+    });
+    setFormErrors({});
+    setEditingCampaign(null);
+    setUploadedImageFile(null);
+    clearUpload();
+  };
+
+  const validateForm = () => {
+    const errors: Record<string, string> = {};
+
+    if (!formData.name.trim()) {
+      errors.name = t("campaigns.nameRequiredError");
+    }
+    if (!formData.description.trim()) {
+      errors.description = t("campaigns.descriptionRequiredError");
+    }
+    if (!formData.type) {
+      errors.type = t("campaigns.typeRequiredError");
+    }
+    if (!formData.imageUrl.trim() && !uploadedImageFile) {
+      errors.image = t("campaigns.imageRequiredError");
+    }
+    if (formData.type === "event") {
+      if (!formData.date) {
+        errors.date = t("campaigns.dateRequiredError");
+      }
+      if (!formData.location.trim()) {
+        errors.location = t("campaigns.locationRequiredError");
+      }
+      if (formData.latitude === null || formData.longitude === null) {
+        errors.coordinates = t("campaigns.latitudeRequiredError");
+      }
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateForm()) return;
+
+    setIsSubmitting(true);
+    try {
+      let finalImageUrl = formData.imageUrl;
+
+      // Upload image if file is selected
+      if (uploadedImageFile) {
+        const uploadedUrl = await uploadFile(uploadedImageFile);
+        if (uploadedUrl) {
+          finalImageUrl = uploadedUrl;
+        } else {
+          setFormErrors({ image: "Failed to upload image" });
+          return;
+        }
+      }
+
+      // Set end date to start date if not provided
+      const finalEndDate = formData.endDate || formData.date;
+
+      const campaignData = {
+        name: formData.name.trim(),
+        description: formData.description.trim(),
+        type: formData.type,
+        image_url: finalImageUrl || null,
+        date: formData.date?.toISOString() || null,
+        end_date: finalEndDate?.toISOString() || null,
+        location: formData.location.trim() || null,
+        latitude: formData.latitude,
+        longitude: formData.longitude,
+        rsvp_enabled: formData.rsvpEnabled,
+        is_active: formData.isActive,
+      };
+
+      if (editingCampaign) {
+        // Update existing campaign
+        const { error } = await supabase
+          .from("campaigns")
+          .update(campaignData)
+          .eq("id", editingCampaign.id);
+
+        if (error) throw error;
+      } else {
+        // Create new campaign
+        const shortId = generateShortId();
+        const { error } = await supabase
+          .from("campaigns")
+          .insert({
+            ...campaignData,
+            short_id: shortId,
+          });
+
+        if (error) throw error;
+      }
+
+      setShowModal(false);
+      resetForm();
+      fetchCampaigns();
+    } catch (err) {
+      setFormErrors({
+        submit: err instanceof Error ? err.message : "Failed to save campaign",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openCreateModal = () => {
+    resetForm();
+    setShowModal(true);
+  };
+
+  const openEditModal = (campaign: Campaign) => {
+    setEditingCampaign(campaign);
+    setFormData({
+      name: campaign.name,
+      description: campaign.description,
+      type: campaign.type,
+      imageUrl: campaign.image_url || "",
+      date: campaign.date ? new Date(campaign.date) : null,
+      endDate: campaign.end_date ? new Date(campaign.end_date) : null,
+      location: campaign.location || "",
+      latitude: campaign.latitude,
+      longitude: campaign.longitude,
+      rsvpEnabled: campaign.rsvp_enabled,
+      isActive: campaign.is_active,
+    });
+    setFormErrors({});
+    setShowModal(true);
+  };
+
+  const handleDeleteCampaign = async (campaign: Campaign) => {
+    setDeletingCampaign(campaign);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingCampaign) return;
+
+    try {
+      const { error } = await supabase
+        .from("campaigns")
+        .delete()
+        .eq("id", deletingCampaign.id);
+
+      if (error) throw error;
+
+      setShowDeleteModal(false);
+      setDeletingCampaign(null);
+      fetchCampaigns();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete campaign");
+    }
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteModal(false);
+    setDeletingCampaign(null);
+  };
+
+  const copyPublicLink = async (campaign: Campaign) => {
+    const publicUrl = `${window.location.origin}/c/${campaign.short_id}`;
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setCopied(campaign.id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch (error) {
+      console.error("Failed to copy link:", error);
+    }
+  };
+
+  const handleLocationSelect = (lat: number, lng: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      latitude: lat,
+      longitude: lng,
+    }));
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setUploadedImageFile(file);
+      setFormData((prev) => ({ ...prev, imageUrl: "" })); // Clear manual URL when file is selected
+    }
+  };
+
+  // Filter campaigns based on search
   const filteredCampaigns = campaigns.filter((campaign) => {
     if (!searchTerm.trim()) return true;
 
@@ -168,316 +296,41 @@ const CampaignManagement: React.FC = () => {
       campaign.name.toLowerCase().includes(searchLower) ||
       campaign.description.toLowerCase().includes(searchLower) ||
       campaign.type.toLowerCase().includes(searchLower) ||
-      (campaign.location &&
-        campaign.location.toLowerCase().includes(searchLower))
+      (campaign.location && campaign.location.toLowerCase().includes(searchLower))
     );
   });
 
-  const validateForm = (): boolean => {
-    const errors: ValidationErrors = {};
+  // Pagination
+  const totalPages = Math.ceil(filteredCampaigns.length / itemsPerPage);
+  const paginatedCampaigns = filteredCampaigns.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
-    // Name is required
-    if (!newCampaign.name.trim()) {
-      errors.name = t("campaigns.nameRequiredError");
-    }
-
-    // Description is required
-    if (!newCampaign.description.trim()) {
-      errors.description = t("campaigns.descriptionRequiredError");
-    }
-
-    // Type is required
-    if (!newCampaign.type) {
-      errors.type = t("campaigns.typeRequiredError");
-    }
-
-    // Image URL is required
-    if (!newCampaign.image_url) {
-      errors.image_url = t("campaigns.imageRequiredError");
-    }
-
-    // Date is required
-    if (!newCampaign.date) {
-      errors.date = t("campaigns.dateRequiredError");
-    }
-
-    // Location is required
-    if (!newCampaign.location.trim()) {
-      errors.location = t("campaigns.locationRequiredError");
-    }
-
-    // Latitude and longitude are required
-    if (typeof newCampaign.latitude !== "number") {
-      errors.latitude = t("campaigns.latitudeRequiredError");
-    }
-
-    if (typeof newCampaign.longitude !== "number") {
-      errors.longitude = t("campaigns.longitudeRequiredError");
-    }
-
-    setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const handleCreateCampaign = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      return;
-    }
-
-    try {
-      // Generate unique short_id
-      const checkShortIdExists = async (shortId: string): Promise<boolean> => {
-        const { data } = await supabase
-          .from("campaigns")
-          .select("id")
-          .eq("short_id", shortId)
-          .limit(1);
-
-        return data !== null && data.length > 0;
-      };
-
-      const shortId = await generateUniqueShortId(checkShortIdExists);
-
-      // Normalize nullable fields to avoid empty strings in timestamp/nullable columns
-      const payload = {
-        name: newCampaign.name,
-        description: newCampaign.description,
-        short_id: shortId,
-        image_url: newCampaign.image_url || null,
-        date: newCampaign.date || null,
-        location: newCampaign.location || null,
-        latitude:
-          typeof newCampaign.latitude === "number"
-            ? newCampaign.latitude
-            : null,
-        longitude:
-          typeof newCampaign.longitude === "number"
-            ? newCampaign.longitude
-            : null,
-        rsvp_enabled: newCampaign.rsvp_enabled,
-        type: newCampaign.type,
-      };
-
-      const { data, error } = await supabase
-        .from("campaigns")
-        .insert([payload])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      setCampaigns([data, ...campaigns]);
-      setShowCreateModal(false);
-      resetForm();
-    } catch (error) {
-      console.error("Error creating campaign:", error);
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
     }
   };
 
-  const handleEditCampaign = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingCampaign) return;
-
-    if (!validateForm()) {
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from("campaigns")
-        .update({
-          name: newCampaign.name,
-          description: newCampaign.description,
-          image_url: newCampaign.image_url || null,
-          date: newCampaign.date || null,
-          location: newCampaign.location || null,
-          latitude: newCampaign.latitude || null,
-          longitude: newCampaign.longitude || null,
-          rsvp_enabled: newCampaign.rsvp_enabled,
-          type: newCampaign.type,
-        })
-        .eq("id", editingCampaign.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      setCampaigns(
-        campaigns.map((c) => (c.id === editingCampaign.id ? data : c))
-      );
-      setShowEditModal(false);
-      setEditingCampaign(null);
-      resetForm();
-    } catch (error) {
-      console.error("Error updating campaign:", error);
-    }
-  };
-
-  const openEditModal = (campaign: Campaign) => {
-    setEditingCampaign(campaign);
-
-    // Format date for datetime-local input
-    const formattedDate = campaign.date
-      ? new Date(campaign.date).toISOString().slice(0, 16)
-      : "";
-
-    setNewCampaign({
-      name: campaign.name,
-      description: campaign.description,
-      short_id: campaign.short_id,
-      image_url: campaign.image_url || "",
-      date: formattedDate,
-      location: campaign.location || "",
-      latitude: campaign.latitude,
-      longitude: campaign.longitude,
-      rsvp_enabled: campaign.type === "event", // Auto-set based on type
-      type: campaign.type,
-    });
-    setShowEditModal(true);
-  };
-  const handleDeleteCampaign = async (id: string) => {
-    setCampaignToDelete(id);
-    setShowDeleteConfirmation(true);
-  };
-
-  const confirmDeleteCampaign = async () => {
-    if (!campaignToDelete) return;
-
-    try {
-      const { error } = await supabase
-        .from("campaigns")
-        .delete()
-        .eq("id", campaignToDelete);
-
-      if (error) throw error;
-      setCampaigns(campaigns.filter((c) => c.id !== campaignToDelete));
-      setShowDeleteConfirmation(false);
-      setCampaignToDelete(null);
-    } catch (error) {
-      console.error("Error deleting campaign:", error);
-    }
-  };
-
-  const cancelDeleteCampaign = () => {
-    setShowDeleteConfirmation(false);
-    setCampaignToDelete(null);
-  };
-
-  const getPublicUrl = (campaignId: string) => {
-    // Find the campaign to get its short_id
-    const campaign = campaigns.find((c) => c.id === campaignId);
-    if (campaign?.short_id) {
-      return `${window.location.origin}/c/${campaign.short_id}`;
-    }
-    return `${window.location.origin}/c/${campaignId}`;
-  };
-
-  const handleLocationSelect = useCallback((lat: number, lng: number) => {
-    setNewCampaign((prev) => ({
-      ...prev,
-      latitude: lat,
-      longitude: lng,
-    }));
-  }, []);
-
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleFileUpload(e.target.files[0]);
-    }
-  };
-
-  const handleFileUpload = async (file: File) => {
-    // Clear any existing image before uploading new one
-    if (newCampaign.image_url) {
-      setNewCampaign({
-        ...newCampaign,
-        image_url: "",
-      });
-      clearUpload();
-    }
-
-    const uploadedUrl = await uploadFile(file);
-    if (uploadedUrl) {
-      setNewCampaign({
-        ...newCampaign,
-        image_url: uploadedUrl,
-      });
-    }
-  };
-
-  const handleClearImage = () => {
-    setNewCampaign({
-      ...newCampaign,
-      image_url: "",
-    });
-    clearUpload();
-  };
-
-  const resetForm = () => {
-    setNewCampaign({
-      name: "",
-      description: "",
-      short_id: "",
-      image_url: "",
-      date: "",
-      location: "",
-      latitude: undefined,
-      longitude: undefined,
-      rsvp_enabled: true, // Default to true since type defaults to "event"
-      type: "event", // Default to "event"
-    });
-    setValidationErrors({});
-    clearUpload();
-    setEditingCampaign(null);
-  };
-
-  const handleFieldChange = (
-    field: keyof typeof newCampaign,
-    value: string | boolean | number | undefined
-  ) => {
-    setNewCampaign((prev) => {
-      const updated = { ...prev, [field]: value };
-
-      // Automatically enable RSVP for events and disable for promotions
-      if (field === "type") {
-        updated.rsvp_enabled = value === "event";
-      }
-
-      return updated;
-    });
-
-    // Clear validation error for this field when user starts typing
-    if (validationErrors[field as keyof ValidationErrors]) {
-      setValidationErrors((prev) => ({ ...prev, [field]: undefined }));
-    }
-  };
+  // Reset to first page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <span className="ml-2 text-gray-600">{t("loading")}</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <p className="text-red-800">{t("error")}: {error}</p>
       </div>
     );
   }
@@ -485,28 +338,24 @@ const CampaignManagement: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h2 className="mobile-heading font-bold text-gray-900">
             {t("campaigns.title")}
-          </h1>
+          </h2>
           <p className="text-gray-600">{t("campaigns.subtitle")}</p>
         </div>
         <button
-          onClick={() => setShowCreateModal(true)}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-          style={{ minHeight: "44px" }}
+          onClick={openCreateModal}
+          className="w-full sm:w-auto mobile-button bg-blue-600 text-white hover:bg-blue-700"
         >
-          <Plus className="h-5 w-5 mr-2" />
-          <span className="hidden sm:inline">
-            {t("campaigns.createCampaign")}
-          </span>
-          <span className="sm:hidden">{t("create")}</span>
+          <Plus className="h-4 w-4 mr-2" />
+          {t("campaigns.createCampaign")}
         </button>
       </div>
 
-      {/* Search Field */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
+      {/* Search */}
+      <div className="mobile-card">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
           <input
@@ -514,8 +363,8 @@ const CampaignManagement: React.FC = () => {
             placeholder={t("campaigns.searchPlaceholder")}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            style={{ fontSize: "16px", minHeight: "44px" }}
+            className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            style={{ fontSize: "16px" }}
           />
           {searchTerm && (
             <button
@@ -527,786 +376,634 @@ const CampaignManagement: React.FC = () => {
           )}
         </div>
         {searchTerm && (
-          <p className="text-sm text-gray-600 mt-2">
-            {t("campaigns.foundResults", {
-              count: filteredCampaigns.length,
-              searchTerm,
-            })}
-          </p>
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-sm text-gray-600">
+              {filteredCampaigns.length === 1
+                ? t("campaigns.foundResults", {
+                    count: filteredCampaigns.length,
+                    searchTerm,
+                  })
+                : t("campaigns.foundResults_plural", {
+                    count: filteredCampaigns.length,
+                    searchTerm,
+                  })}
+            </p>
+            <button
+              onClick={() => setSearchTerm("")}
+              className="text-sm text-blue-600 hover:text-blue-800"
+            >
+              {t("campaigns.clearSearch")}
+            </button>
+          </div>
         )}
       </div>
+
       {/* Campaigns Grid */}
-      {campaigns.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-          <Calendar className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+      {paginatedCampaigns.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-6xl mb-4">📅</div>
           <h3 className="text-lg font-medium text-gray-900 mb-2">
-            {t("campaigns.noCampaigns")}
+            {searchTerm ? t("campaigns.noResults") : t("campaigns.noCampaigns")}
           </h3>
           <p className="text-gray-600 mb-6">
-            {t("campaigns.noCampaignsSubtitle")}
+            {searchTerm
+              ? t("campaigns.noResultsSubtitle")
+              : t("campaigns.noCampaignsSubtitle")}
           </p>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-            style={{ minHeight: "44px" }}
-          >
-            <Plus className="h-5 w-5 mr-2" />
-            {t("campaigns.createCampaign")}
-          </button>
-        </div>
-      ) : filteredCampaigns.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-          <Search className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            {t("campaigns.noResults")}
-          </h3>
-          <p className="text-gray-600 mb-6">
-            {t("campaigns.noResultsSubtitle")}
-          </p>
-          <button
-            onClick={() => setSearchTerm("")}
-            className="inline-flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors duration-200"
-            style={{ minHeight: "44px" }}
-          >
-            <X className="h-5 w-5 mr-2" />
-            {t("campaigns.clearSearch")}
-          </button>
+          {!searchTerm && (
+            <button
+              onClick={openCreateModal}
+              className="mobile-button bg-blue-600 text-white hover:bg-blue-700"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              {t("campaigns.createNew")}
+            </button>
+          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-          {filteredCampaigns.map((campaign) => (
-            <div
-              key={campaign.id}
-              className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow duration-200 h-full flex flex-col"
-            >
-              {campaign.image_url && (
-                <img
-                  src={campaign.image_url}
-                  alt={campaign.name}
-                  className="w-full h-32 sm:h-48 object-cover"
-                />
-              )}
-              <div className="p-3 sm:p-6 flex flex-col h-full">
-                <div className="flex items-start justify-between mb-2 sm:mb-3">
-                  <h3 className="text-base sm:text-lg font-semibold text-gray-900 line-clamp-2 flex-1 mr-2">
-                    {campaign.name}
-                  </h3>
-                  <span
-                    className={`px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 ${
-                      campaign.type === "event"
-                        ? "bg-green-100 text-green-800"
-                        : "bg-purple-100 text-purple-800"
-                    }`}
-                  >
-                    {campaign.type}
-                  </span>
-                </div>
-
-                <p className="text-gray-600 text-xs sm:text-sm mb-3 sm:mb-4 line-clamp-3">
-                  {campaign.description}
-                </p>
-
-                {campaign.date && (
-                  <div className="flex items-center text-xs sm:text-sm text-gray-500 mb-2">
-                    <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
-                    <span className="truncate">
-                      {new Date(campaign.date).toLocaleDateString()}
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {paginatedCampaigns.map((campaign) => (
+              <div
+                key={campaign.id}
+                className="bg-white rounded-lg shadow-sm border overflow-hidden hover:shadow-md transition-shadow"
+              >
+                {/* Campaign Image */}
+                <div className="relative h-48">
+                  {campaign.image_url ? (
+                    <img
+                      src={campaign.image_url}
+                      alt={campaign.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                      <Calendar className="h-12 w-12 text-gray-400" />
+                    </div>
+                  )}
+                  <div className="absolute top-2 left-2">
+                    <span
+                      className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        campaign.type === "event"
+                          ? "bg-blue-100 text-blue-800"
+                          : "bg-purple-100 text-purple-800"
+                      }`}
+                    >
+                      {campaign.type === "event"
+                        ? t("campaigns.event")
+                        : t("campaigns.promotion")}
                     </span>
                   </div>
-                )}
-
-                {campaign.location && (
-                  <div className="flex items-center text-xs sm:text-sm text-gray-500 mb-3 sm:mb-4">
-                    <MapPin className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
-                    <span className="truncate">{campaign.location}</span>
-                  </div>
-                )}
-
-                <div className="mt-auto pt-4">
-                  <div className="grid grid-cols-2 gap-1 sm:gap-2 w-full">
-                    <button
-                      onClick={() =>
-                        navigate(`/admin/campaigns/${campaign.id}`)
-                      }
-                      className="flex items-center justify-center w-full px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors duration-200"
-                      style={{ minHeight: "32px" }}
-                    >
-                      <Eye className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                      <span className="hidden sm:inline">{t("view")}</span>
-                      <span className="sm:hidden">View</span>
-                    </button>
-
-                    <button
-                      onClick={() => openEditModal(campaign)}
-                      className="flex items-center justify-center w-full px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-yellow-100 text-yellow-700 rounded-md hover:bg-yellow-200 transition-colors duration-200"
-                      style={{ minHeight: "32px" }}
-                    >
-                      <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                      <span className="hidden sm:inline">{t("edit")}</span>
-                      <span className="sm:hidden">Edit</span>
-                    </button>
-
-                    <a
-                      href={getPublicUrl(campaign.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center w-full px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 transition-colors duration-200"
-                      style={{ minHeight: "32px" }}
-                    >
-                      <ExternalLink className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                      <span className="hidden sm:inline">
-                        {t("campaigns.public")}
-                      </span>
-                      <span className="sm:hidden">Public</span>
-                    </a>
-
-                    <button
-                      onClick={() => handleDeleteCampaign(campaign.id)}
-                      className="flex items-center justify-center w-full px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors duration-200"
-                      style={{ minHeight: "32px" }}
-                    >
-                      <Trash2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                      <span className="hidden sm:inline">{t("delete")}</span>
-                      <span className="sm:hidden">Del</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Edit Campaign Modal */}
-      {showEditModal && editingCampaign && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
-          style={{
-            marginTop: 0,
-          }}
-          onClick={() => {
-            setShowEditModal(false);
-            resetForm();
-          }}
-        >
-          <div
-            className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto relative"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  {t("campaigns.editCampaign")}
-                </h2>
-                <button
-                  type="button"
-                  aria-label={t("close")}
-                  title={t("close")}
-                  onClick={() => {
-                    setShowEditModal(false);
-                    resetForm();
-                  }}
-                  className="p-2 rounded-full text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <form onSubmit={handleEditCampaign} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.nameRequired")}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newCampaign.name}
-                    onChange={(e) => handleFieldChange("name", e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style={{ fontSize: "16px", minHeight: "44px" }}
-                  />
-                  {validationErrors.name && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.name}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.descriptionRequired")}
-                  </label>
-                  <textarea
-                    required
-                    value={newCampaign.description}
-                    onChange={(e) =>
-                      handleFieldChange("description", e.target.value)
-                    }
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style={{ fontSize: "16px" }}
-                  />
-                  {validationErrors.description && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.description}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.typeRequired")}
-                  </label>
-                  <Select
-                    value={newCampaign.type}
-                    onValueChange={(value) =>
-                      handleFieldChange("type", value as "event" | "promotion")
-                    }
-                  >
-                    <SelectTrigger
-                      className="w-full border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      style={{ minHeight: "44px" }}
-                    >
-                      <SelectValue placeholder={t("campaigns.selectType")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="event">
-                        {t("campaigns.event")}
-                      </SelectItem>
-                      <SelectItem value="promotion">
-                        {t("campaigns.promotion")}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {validationErrors.type && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.type}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t("campaigns.image")}
-                  </label>
-
-                  {/* Image Preview or Upload Area */}
-                  {newCampaign.image_url ? (
-                    /* Image Preview */
-                    <div className="relative">
-                      <img
-                        src={newCampaign.image_url}
-                        alt={t("campaigns.image")}
-                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
-                      />
-                      <div className="absolute top-2 right-2 flex items-center justify-center">
-                        <button
-                          type="button"
-                          onClick={handleClearImage}
-                          className="p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors flex items-center justify-center"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    /* Upload Area */
-                    <div
-                      className={`relative border-2 border-dashed rounded-lg p-6 transition-colors ${
-                        dragActive
-                          ? "border-blue-400 bg-blue-50"
-                          : uploadState.error
-                          ? "border-red-300 bg-red-50"
-                          : "border-gray-300 hover:border-gray-400"
+                  <div className="absolute top-2 right-2">
+                    <span
+                      className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        campaign.is_active
+                          ? "bg-green-100 text-green-800"
+                          : "bg-gray-100 text-gray-800"
                       }`}
-                      onDragEnter={handleDrag}
-                      onDragLeave={handleDrag}
-                      onDragOver={handleDrag}
-                      onDrop={handleDrop}
                     >
-                      <div className="text-center">
-                        {uploadState.uploading ? (
-                          <div className="space-y-2">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                            <p className="text-sm text-blue-600">
-                              {t("campaigns.uploadingImage")}
-                            </p>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div
-                                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                                style={{ width: `${uploadState.progress}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <ImageIcon className="mx-auto h-12 w-12 text-gray-400" />
-                            <div className="mt-4">
-                              <label
-                                htmlFor="edit-image-upload"
-                                className="cursor-pointer"
-                              >
-                                <span className="mt-2 block text-sm font-medium text-gray-900">
-                                  {t("campaigns.dropImage")}{" "}
-                                  <span className="text-blue-600">
-                                    {t("campaigns.browse")}
-                                  </span>
-                                </span>
-                                <input
-                                  id="edit-image-upload"
-                                  name="edit-image-upload"
-                                  type="file"
-                                  accept="image/*"
-                                  className="sr-only"
-                                  onChange={handleFileSelect}
-                                />
-                              </label>
-                              <p className="mt-1 text-xs text-gray-500">
-                                {t("campaigns.imageFormats")}
-                              </p>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Upload Error */}
-                  {uploadState.error && !newCampaign.image_url && (
-                    <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md">
-                      <p className="text-sm text-red-600">
-                        {uploadState.error}
-                      </p>
-                    </div>
-                  )}
+                      {campaign.is_active ? "Active" : "Inactive"}
+                    </span>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.date")}
-                  </label>
-                  <DatePicker
-                    selected={
-                      newCampaign.date ? new Date(newCampaign.date) : null
-                    }
-                    onChange={(date) => {
-                      if (date) {
-                        // Round to nearest 30 minutes
-                        const roundedDate = new Date(date);
-                        const minutes = roundedDate.getMinutes();
-                        const roundedMinutes = minutes < 30 ? 0 : 30;
-                        roundedDate.setMinutes(roundedMinutes, 0, 0);
-
-                        const isoString = roundedDate.toISOString();
-                        handleFieldChange("date", isoString);
-                      }
-                    }}
-                    showTimeSelect
-                    timeIntervals={30}
-                    timeCaption="Time"
-                    dateFormat="MMMM d, yyyy h:mm aa"
-                    placeholderText="Select date and time"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    minDate={new Date()}
-                  />
-                </div>
-                {validationErrors.date && (
-                  <p className="text-xs text-red-600 mt-1">
-                    {validationErrors.date}
+                {/* Campaign Content */}
+                <div className="p-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2 line-clamp-1">
+                    {campaign.name}
+                  </h3>
+                  <p className="text-gray-600 text-sm mb-3 line-clamp-2">
+                    {campaign.description}
                   </p>
-                )}
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.location")}
-                  </label>
-                  <input
-                    type="text"
-                    value={newCampaign.location}
-                    onChange={(e) =>
-                      handleFieldChange("location", e.target.value)
-                    }
-                    placeholder={t("campaigns.locationPlaceholder")}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style={{ fontSize: "16px", minHeight: "44px" }}
-                  />
-                  {validationErrors.location && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.location}
-                    </p>
-                  )}
-                </div>
+                  {/* Campaign Details */}
+                  <div className="space-y-2 mb-4">
+                    {campaign.date && (
+                      <div className="flex items-center text-sm text-gray-500">
+                        <Calendar className="h-4 w-4 mr-2" />
+                        <span>
+                          {new Date(campaign.date).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+                    {campaign.location && (
+                      <div className="flex items-center text-sm text-gray-500">
+                        <MapPin className="h-4 w-4 mr-2" />
+                        <span className="line-clamp-1">{campaign.location}</span>
+                      </div>
+                    )}
+                    {campaign.rsvp_enabled && (
+                      <div className="flex items-center text-sm text-gray-500">
+                        <Users className="h-4 w-4 mr-2" />
+                        <span>RSVP Required</span>
+                      </div>
+                    )}
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t("campaigns.mapLocation")}
-                  </label>
-                  <LocationMapPicker
-                    onLocationSelect={handleLocationSelect}
-                    initialLat={newCampaign.latitude}
-                    initialLng={newCampaign.longitude}
-                  />
-                  {(validationErrors.latitude ||
-                    validationErrors.longitude) && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.latitude || validationErrors.longitude}
-                    </p>
-                  )}
-                </div>
+                  {/* Actions */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Link
+                        to={`/admin/campaigns/${campaign.id}`}
+                        className="text-blue-600 hover:text-blue-800 p-1"
+                        title="View details"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Link>
+                      <button
+                        onClick={() => openEditModal(campaign)}
+                        className="text-yellow-600 hover:text-yellow-800 p-1"
+                        title="Edit campaign"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCampaign(campaign)}
+                        className="text-red-600 hover:text-red-800 p-1"
+                        title="Delete campaign"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
 
-                <div className="flex gap-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowEditModal(false);
-                      resetForm();
-                    }}
-                    className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors duration-200"
-                    style={{ minHeight: "44px" }}
-                  >
-                    {t("cancel")}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={uploadState.uploading}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ minHeight: "44px" }}
-                  >
-                    {uploadState.uploading
-                      ? t("campaigns.uploadingImage")
-                      : t("campaigns.editCampaign")}
-                  </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => copyPublicLink(campaign)}
+                        className="text-gray-600 hover:text-gray-800 p-1"
+                        title="Copy public link"
+                      >
+                        {copied === campaign.id ? (
+                          <Check className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </button>
+                      <a
+                        href={`/c/${campaign.short_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-gray-600 hover:text-gray-800 p-1"
+                        title="Open public link"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </a>
+                    </div>
+                  </div>
                 </div>
-              </form>
-            </div>
+              </div>
+            ))}
           </div>
-        </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing {(currentPage - 1) * itemsPerPage + 1} to{" "}
+                {Math.min(currentPage * itemsPerPage, filteredCampaigns.length)}{" "}
+                of {filteredCampaigns.length} campaigns
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  {t("previous")}
+                </button>
+
+                <div className="flex items-center space-x-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => handlePageChange(pageNum)}
+                        className={`px-3 py-2 text-sm font-medium rounded-lg ${
+                          currentPage === pageNum
+                            ? "bg-blue-600 text-white"
+                            : "text-gray-500 bg-white border border-gray-300 hover:bg-gray-50"
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {t("next")}
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
-      {/* Create Campaign Modal */}
-      {showCreateModal && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
-          style={{
-            marginTop: 0,
-          }}
-          onClick={() => {
-            setShowCreateModal(false);
-            resetForm();
-          }}
-        >
-          <div
-            className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto relative"
-            onClick={(e) => e.stopPropagation()}
-          >
+
+      {/* Create/Edit Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-semibold text-gray-900">
-                  {t("campaigns.createNew")}
+                  {editingCampaign
+                    ? t("campaigns.editCampaign")
+                    : t("campaigns.createCampaign")}
                 </h2>
                 <button
-                  type="button"
-                  aria-label={t("close")}
-                  title={t("close")}
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    resetForm();
-                  }}
-                  className="p-2 rounded-full text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                  onClick={() => setShowModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="h-6 w-6" />
                 </button>
               </div>
 
-              <form onSubmit={handleCreateCampaign} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.nameRequired")}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newCampaign.name}
-                    onChange={(e) => handleFieldChange("name", e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style={{ fontSize: "16px", minHeight: "44px" }}
-                  />
-                  {validationErrors.name && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.name}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.descriptionRequired")}
-                  </label>
-                  <textarea
-                    required
-                    value={newCampaign.description}
-                    onChange={(e) =>
-                      handleFieldChange("description", e.target.value)
-                    }
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style={{ fontSize: "16px" }}
-                  />
-                  {validationErrors.description && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.description}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.typeRequired")}
-                  </label>
-                  <Select
-                    value={newCampaign.type}
-                    onValueChange={(value) =>
-                      handleFieldChange("type", value as "event" | "promotion")
-                    }
-                  >
-                    <SelectTrigger
-                      className="w-full border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      style={{ minHeight: "44px" }}
-                    >
-                      <SelectValue placeholder={t("campaigns.selectType")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="event">
-                        {t("campaigns.event")}
-                      </SelectItem>
-                      <SelectItem value="promotion">
-                        {t("campaigns.promotion")}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {validationErrors.type && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.type}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t("campaigns.image")}
-                  </label>
-
-                  {/* Image Preview or Upload Area */}
-                  {newCampaign.image_url ? (
-                    /* Image Preview */
-                    <div className="relative">
-                      <img
-                        src={newCampaign.image_url}
-                        alt={t("campaigns.image")}
-                        className="w-full h-48 object-cover rounded-lg border border-gray-300"
-                      />
-                      <div className="absolute top-2 right-2 flex items-center justify-center">
-                        <button
-                          type="button"
-                          onClick={handleClearImage}
-                          className="p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors flex items-center justify-center"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    /* Upload Area */
-                    <div
-                      className={`relative border-2 border-dashed rounded-lg p-6 transition-colors ${
-                        dragActive
-                          ? "border-blue-400 bg-blue-50"
-                          : uploadState.error
-                          ? "border-red-300 bg-red-50"
-                          : "border-gray-300 hover:border-gray-400"
-                      }`}
-                      onDragEnter={handleDrag}
-                      onDragLeave={handleDrag}
-                      onDragOver={handleDrag}
-                      onDrop={handleDrop}
-                    >
-                      <div className="text-center">
-                        {uploadState.uploading ? (
-                          <div className="space-y-2">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                            <p className="text-sm text-blue-600">
-                              {t("campaigns.uploadingImage")}
-                            </p>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div
-                                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                                style={{ width: `${uploadState.progress}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <ImageIcon className="mx-auto h-12 w-12 text-gray-400" />
-                            <div className="mt-4">
-                              <label
-                                htmlFor="image-upload"
-                                className="cursor-pointer"
-                              >
-                                <span className="mt-2 block text-sm font-medium text-gray-900">
-                                  {t("campaigns.dropImage")}{" "}
-                                  <span className="text-blue-600">
-                                    {t("campaigns.browse")}
-                                  </span>
-                                </span>
-                                <input
-                                  id="image-upload"
-                                  name="image-upload"
-                                  type="file"
-                                  accept="image/*"
-                                  className="sr-only"
-                                  onChange={handleFileSelect}
-                                />
-                              </label>
-                              <p className="mt-1 text-xs text-gray-500">
-                                {t("campaigns.imageFormats")}
-                              </p>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Upload Error */}
-                  {uploadState.error && !newCampaign.image_url && (
-                    <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md">
-                      <p className="text-sm text-red-600">
-                        {uploadState.error}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Manual URL Input - only show when no image is present */}
-                  {!newCampaign.image_url && (
-                    <div className="mt-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        {t("campaigns.enterImageUrl")}
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Left Column */}
+                  <div className="space-y-6">
+                    {/* Campaign Name */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {t("campaigns.nameRequired")}
                       </label>
                       <input
-                        type="url"
-                        value={newCampaign.image_url}
+                        type="text"
+                        required
+                        value={formData.name}
                         onChange={(e) =>
-                          handleFieldChange("image_url", e.target.value)
+                          setFormData({ ...formData, name: e.target.value })
                         }
-                        placeholder="https://example.com/image.jpg"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        style={{ fontSize: "16px", minHeight: "44px" }}
+                        className={`mobile-input ${
+                          formErrors.name ? "border-red-300" : ""
+                        }`}
+                        style={{ fontSize: "16px" }}
                       />
-                      {validationErrors.image_url && (
-                        <p className="text-xs text-red-600 mt-1">
-                          {validationErrors.image_url}
+                      {formErrors.name && (
+                        <p className="text-sm text-red-600 mt-1">
+                          {formErrors.name}
                         </p>
                       )}
+                    </div>
+
+                    {/* Description */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {t("campaigns.descriptionRequired")}
+                      </label>
+                      <textarea
+                        required
+                        value={formData.description}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            description: e.target.value,
+                          })
+                        }
+                        rows={4}
+                        className={`mobile-input ${
+                          formErrors.description ? "border-red-300" : ""
+                        }`}
+                        style={{ fontSize: "16px" }}
+                      />
+                      {formErrors.description && (
+                        <p className="text-sm text-red-600 mt-1">
+                          {formErrors.description}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Campaign Type */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {t("campaigns.typeRequired")}
+                      </label>
+                      <select
+                        required
+                        value={formData.type}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            type: e.target.value as "event" | "promotion",
+                          })
+                        }
+                        className={`mobile-input ${
+                          formErrors.type ? "border-red-300" : ""
+                        }`}
+                        style={{ fontSize: "16px" }}
+                      >
+                        <option value="">{t("campaigns.selectType")}</option>
+                        <option value="event">{t("campaigns.event")}</option>
+                        <option value="promotion">
+                          {t("campaigns.promotion")}
+                        </option>
+                      </select>
+                      {formErrors.type && (
+                        <p className="text-sm text-red-600 mt-1">
+                          {formErrors.type}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Is Active Toggle */}
+                    <div>
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={formData.isActive}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              isActive: e.target.checked,
+                            })
+                          }
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 mr-2"
+                        />
+                        <span className="text-sm font-medium text-gray-700">
+                          Campaign is Active
+                        </span>
+                      </label>
                       <p className="text-xs text-gray-500 mt-1">
-                        {t("campaigns.imageUrlOverride")}
+                        Only active campaigns will be visible to the public
                       </p>
                     </div>
-                  )}
+
+                    {/* Start Date & Time */}
+                    {formData.type === "event" && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Start Date & Time *
+                        </label>
+                        <DatePicker
+                          selected={formData.date}
+                          onChange={(date) =>
+                            setFormData({ ...formData, date })
+                          }
+                          showTimeSelect
+                          timeFormat="HH:mm"
+                          timeIntervals={15}
+                          dateFormat="MMMM d, yyyy h:mm aa"
+                          className={`mobile-input ${
+                            formErrors.date ? "border-red-300" : ""
+                          }`}
+                          placeholderText="Select start date and time"
+                          minDate={new Date()}
+                          style={{ fontSize: "16px" }}
+                        />
+                        {formErrors.date && (
+                          <p className="text-sm text-red-600 mt-1">
+                            {formErrors.date}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* End Date & Time */}
+                    {formData.type === "event" && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          End Date & Time
+                        </label>
+                        <DatePicker
+                          selected={formData.endDate}
+                          onChange={(date) =>
+                            setFormData({ ...formData, endDate: date })
+                          }
+                          showTimeSelect
+                          timeFormat="HH:mm"
+                          timeIntervals={15}
+                          dateFormat="MMMM d, yyyy h:mm aa"
+                          className="mobile-input"
+                          placeholderText="Select end date and time (defaults to start date)"
+                          minDate={formData.date || new Date()}
+                          style={{ fontSize: "16px" }}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          If not specified, will default to the start date & time
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Location Name */}
+                    {formData.type === "event" && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          {t("campaigns.location")} *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={formData.location}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              location: e.target.value,
+                            })
+                          }
+                          placeholder={t("campaigns.locationPlaceholder")}
+                          className={`mobile-input ${
+                            formErrors.location ? "border-red-300" : ""
+                          }`}
+                          style={{ fontSize: "16px" }}
+                        />
+                        {formErrors.location && (
+                          <p className="text-sm text-red-600 mt-1">
+                            {formErrors.location}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* RSVP Toggle */}
+                    <div>
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={formData.rsvpEnabled}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              rsvpEnabled: e.target.checked,
+                            })
+                          }
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 mr-2"
+                        />
+                        <span className="text-sm font-medium text-gray-700">
+                          {t("campaigns.enableRsvp")}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Right Column */}
+                  <div className="space-y-6">
+                    {/* Image Upload */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {t("campaigns.image")} *
+                      </label>
+
+                      {/* File Upload */}
+                      <div className="mb-4">
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
+                          <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                          <div className="mt-4">
+                            <label htmlFor="image-upload" className="cursor-pointer">
+                              <span className="mt-2 block text-sm font-medium text-gray-900">
+                                {t("campaigns.dropImage")}{" "}
+                                <span className="text-blue-600">
+                                  {t("campaigns.browse")}
+                                </span>
+                              </span>
+                              <input
+                                id="image-upload"
+                                name="image-upload"
+                                type="file"
+                                accept="image/*"
+                                className="sr-only"
+                                onChange={handleImageUpload}
+                              />
+                            </label>
+                            <p className="mt-1 text-xs text-gray-500">
+                              {t("campaigns.imageFormats")}
+                            </p>
+                          </div>
+                        </div>
+
+                        {uploadedImageFile && (
+                          <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-blue-900">
+                                {uploadState.uploading
+                                  ? t("campaigns.uploadingImage")
+                                  : `Selected: ${uploadedImageFile.name}`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUploadedImageFile(null);
+                                  clearUpload();
+                                }}
+                                className="text-blue-600 hover:text-blue-800"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {uploadState.error && (
+                          <div className="mt-2 p-3 bg-red-50 rounded-lg border border-red-200">
+                            <p className="text-sm text-red-800">
+                              {uploadState.error}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Manual URL Input */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          {t("campaigns.enterImageUrl")}
+                        </label>
+                        <input
+                          type="url"
+                          value={formData.imageUrl}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              imageUrl: e.target.value,
+                            })
+                          }
+                          placeholder="https://example.com/image.jpg"
+                          className="mobile-input"
+                          style={{ fontSize: "16px" }}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          {t("campaigns.imageUrlOverride")}
+                        </p>
+                      </div>
+
+                      {formErrors.image && (
+                        <p className="text-sm text-red-600 mt-1">
+                          {formErrors.image}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Map Location Picker */}
+                    {formData.type === "event" && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          {t("campaigns.mapLocation")} *
+                        </label>
+                        <LocationMapPicker
+                          onLocationSelect={handleLocationSelect}
+                          initialLat={formData.latitude || undefined}
+                          initialLng={formData.longitude || undefined}
+                        />
+                        {formErrors.coordinates && (
+                          <p className="text-sm text-red-600 mt-1">
+                            {formErrors.coordinates}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.date")} & Time
-                  </label>
-                  <DatePicker
-                    selected={
-                      newCampaign.date ? new Date(newCampaign.date) : null
-                    }
-                    onChange={(date) => {
-                      if (date) {
-                        // Round to nearest 30 minutes
-                        const roundedDate = new Date(date);
-                        const minutes = roundedDate.getMinutes();
-                        const roundedMinutes = minutes < 30 ? 0 : 30;
-                        roundedDate.setMinutes(roundedMinutes, 0, 0);
-
-                        const isoString = roundedDate.toISOString();
-                        handleFieldChange("date", isoString);
-                      }
-                    }}
-                    showTimeSelect
-                    timeIntervals={30}
-                    timeCaption="Time"
-                    dateFormat="MMMM d, yyyy h:mm aa"
-                    placeholderText="Select date and time"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    minDate={new Date()}
-                  />
-                </div>
-                {validationErrors.date && (
-                  <p className="text-xs text-red-600 mt-1">
-                    {validationErrors.date}
-                  </p>
+                {/* Submit Error */}
+                {formErrors.submit && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-600">{formErrors.submit}</p>
+                  </div>
                 )}
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t("campaigns.location")}
-                  </label>
-                  <input
-                    type="text"
-                    value={newCampaign.location}
-                    onChange={(e) =>
-                      handleFieldChange("location", e.target.value)
-                    }
-                    placeholder={t("campaigns.locationPlaceholder")}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style={{ fontSize: "16px", minHeight: "44px" }}
-                  />
-                  {validationErrors.location && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.location}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t("campaigns.mapLocation")}
-                  </label>
-                  <LocationMapPicker
-                    onLocationSelect={handleLocationSelect}
-                    initialLat={newCampaign.latitude}
-                    initialLng={newCampaign.longitude}
-                  />
-                  {(validationErrors.latitude ||
-                    validationErrors.longitude) && (
-                    <p className="text-xs text-red-600 mt-1">
-                      {validationErrors.latitude || validationErrors.longitude}
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex gap-3 pt-4">
+                {/* Form Actions */}
+                <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t">
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowCreateModal(false);
-                      resetForm();
-                    }}
-                    className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors duration-200"
-                    style={{ minHeight: "44px" }}
+                    onClick={() => setShowModal(false)}
+                    className="flex-1 mobile-button bg-gray-100 text-gray-700 hover:bg-gray-200"
                   >
                     {t("cancel")}
                   </button>
                   <button
                     type="submit"
-                    disabled={uploadState.uploading}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ minHeight: "44px" }}
+                    disabled={isSubmitting || uploadState.uploading}
+                    className="flex-1 mobile-button justify-center bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {uploadState.uploading
-                      ? t("campaigns.uploadingImage")
-                      : t("campaigns.createCampaign")}
+                    {isSubmitting ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        {editingCampaign
+                          ? t("sms.updateCampaign")
+                          : t("sms.createCampaign")}
+                      </>
+                    ) : (
+                      <>
+                        <Save className="h-4 w-4 mr-2" />
+                        {editingCampaign
+                          ? t("sms.updateCampaign")
+                          : t("sms.createCampaign")}
+                      </>
+                    )}
                   </button>
                 </div>
               </form>
@@ -1316,42 +1013,39 @@ const CampaignManagement: React.FC = () => {
       )}
 
       {/* Delete Confirmation Modal */}
-      {showDeleteConfirmation && campaignToDelete && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
-          onClick={cancelDeleteCampaign}
-        >
-          <div
-            className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto relative"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6 text-center">
-              <AlertTriangle className="mx-auto h-16 w-16 text-red-500 mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                {t("campaigns.deleteConfirmTitle")}
-              </h3>
-              <p className="text-gray-600 mb-6">
+      {showDeleteModal && deletingCampaign && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  {t("campaigns.deleteConfirmTitle")}
+                </h2>
+                <button
+                  onClick={cancelDelete}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+              <p className="text-gray-800 mb-6">
                 {t("campaigns.deleteConfirmMessage", {
-                  name:
-                    campaigns.find((c) => c.id === campaignToDelete)?.name ||
-                    campaignToDelete,
+                  name: deletingCampaign.name,
                 })}
               </p>
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                  variant="outline"
-                  onClick={cancelDeleteCampaign}
-                  className="flex-1"
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={cancelDelete}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors duration-200"
                 >
                   {t("cancel")}
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={confirmDeleteCampaign}
-                  className="flex-1"
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200"
                 >
                   {t("delete")}
-                </Button>
+                </button>
               </div>
             </div>
           </div>
