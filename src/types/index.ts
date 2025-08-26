@@ -63,10 +63,12 @@ export interface Campaign {
   description: string;
   image_url?: string;
   date?: string;
+  end_date?: string;
   location?: string;
   latitude?: number;
   longitude?: number;
   rsvp_enabled: boolean;
+  is_active: boolean;
   type: "event" | "promotion";
   created_at: string;
 }
